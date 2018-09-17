@@ -1,4 +1,4 @@
-# fl2k-psk
+# fl2k-wspr
 built on initial work in https://github.com/peterbmarks/fl2k and https://osmocom.org/projects/osmo-fl2k/wiki
 
 ###### install libusb
