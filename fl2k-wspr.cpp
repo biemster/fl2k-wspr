@@ -6,26 +6,28 @@
  *
  */
 
+#include <getopt.h>
 #include <iostream>
 #include <signal.h>
 #include <math.h>
 #include <map>
 #include <vector>
+#include <string>
+#include <algorithm>
 
 #include "osmo-fl2k.h"
+#include "wspr.h"
 
 #define SIGNAL_MAX 99			// 99 * 0.70710678 = 70.00.... keeps rounding error in signal to minimum
 								// 17 * 0.70710678 = 12.02.... keeps rounding error low and low signal keeps rest of the spectrum relatively clean
 #define SIGNAL_MIN -SIGNAL_MAX
-#define SIGNAL_FREQ 28000000
-#define SF_RATIO 4				// {2,4,8} samplerate / signal frequency ratio (max sample rate is about 140 MS/s on USB3)
+#define SF_RATIO 8				// {2,4,8} samplerate / signal frequency ratio (max sample rate is about 140 MS/s on USB3)
 
 #define SIN_1_4_PI 0.70710678		// sin(1/4*pi)
 
-int8_t *tx_buffer = nullptr;
-int phase_curr = 0;
-
 using namespace std;
+
+int8_t *tx_buffer = nullptr;
 
 fl2k_dev_t *fl2k_dev = nullptr;
 uint32_t fl2k_dev_idx = 0;
@@ -93,6 +95,45 @@ void set_freq_carrier(uint32_t freq) {
 
 
 int main(int argc, char **argv) {
+	string callsign = "";
+	string location = "";
+	int power = 0;
+
+	int c = 0;
+	while ((c = getopt(argc, argv,"c:l:p:")) != -1) {
+		switch (c) {
+		case 'c':
+			callsign = optarg;
+			break;
+		case 'l':
+			location = optarg; 
+			break;
+		case 'p':
+			power = atoi(optarg);
+			break;
+		default:
+			cout << "Usage: " << argv[0] << " -cCALLSIGN -lLOCATION -pPOWER" << endl;
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	if(callsign.size() == 0 || location.size() == 0 || power == 0) {
+		cout << "Usage: " << argv[0] << " -cCALLSIGN -lLOCATION -pPOWER" << endl;
+		exit(EXIT_FAILURE);
+	}
+
+	transform(callsign.begin(), callsign.end(),callsign.begin(), ::toupper);
+	transform(location.begin(), location.end(),location.begin(), ::toupper);
+
+	WsprMessage wspr_msg(callsign.c_str(), location.c_str(), power);
+	/*
+	cout << "{" << flush;
+	for(int i = 0; i < WSPR_MSG_SIZE; i++) {
+		cout << (int)wspr_msg.symbols[i] << "," << flush;
+	}
+	cout << "}" << endl;
+	*/
+
 	attach_sighandlers();
 	init_txbuffer();
 	fl2k_open(&fl2k_dev, fl2k_dev_idx);
@@ -102,32 +143,13 @@ int main(int argc, char **argv) {
 	}
 	else {
 		cout << "Opened device" << endl;
-	
 		int r = fl2k_start_tx(fl2k_dev, fl2k_callback, nullptr, 0);
-		set_freq_carrier(SIGNAL_FREQ);
 
-		cout << "Press u,d,q to raise or lower frequency, or quit: " << flush;
-		char c;
-		while(cin.get(c)) {
-			switch(c) {
-			case 'u':
-				set_freq_carrier((fl2k_get_sample_rate(fl2k_dev) /SF_RATIO) +1000000);
-				break;
-			case 'd':
-				set_freq_carrier((fl2k_get_sample_rate(fl2k_dev) /SF_RATIO) -1000000);
-				break;
-			case 'q':
-				exit(0);
-				break;
-			default:
-				break;
-			}
-			
-			cin.ignore();
-			cout << "> " << flush;
-		}
+		/* TODO: run timers here to keep transmitting */
 	}
 
+	fl2k_stop_tx(fl2k_dev);
+	fl2k_close(fl2k_dev);
 
 	return 0;
 }
