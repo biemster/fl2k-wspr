@@ -1,6 +1,8 @@
 # fl2k-wspr
 built on initial work in https://github.com/peterbmarks/fl2k and https://osmocom.org/projects/osmo-fl2k/wiki
 
+** I'm seeing a lot of drift in the signal, don't know how to get around this. I will leave this project for now, maybe come back to it when I learn more about fl2k **
+
 ###### install libusb
 sudo apt-get install libusb-1.0-0-dev
 
