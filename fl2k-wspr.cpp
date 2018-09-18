@@ -14,20 +14,23 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 #include "osmo-fl2k.h"
 #include "wspr.h"
 
-#define SIGNAL_MAX 99			// 99 * 0.70710678 = 70.00.... keeps rounding error in signal to minimum
-								// 17 * 0.70710678 = 12.02.... keeps rounding error low and low signal keeps rest of the spectrum relatively clean
-#define SIGNAL_MIN -SIGNAL_MAX
-#define SF_RATIO 8				// {2,4,8} samplerate / signal frequency ratio (max sample rate is about 140 MS/s on USB3)
+#define FREQ_BASE 14095600
+#define FREQ_SHIFT 1.46
+#define SYMBOL_LENGTH_MS 683
 
-#define SIN_1_4_PI 0.70710678		// sin(1/4*pi)
+#define SIGNAL_MAX 127
+#define SAMPLE_RATE  112857136
 
 using namespace std;
 
 int8_t *tx_buffer = nullptr;
+vector<int8_t*> tx_symbols;
 
 fl2k_dev_t *fl2k_dev = nullptr;
 uint32_t fl2k_dev_idx = 0;
@@ -53,16 +56,23 @@ void fl2k_callback(fl2k_data_info_t *data_info) {
 }
 
 void init_txbuffer() {
-	int8_t sin14pi = (int8_t)(SIGNAL_MAX * SIN_1_4_PI);
-	map<int,vector<int8_t>> sines;
-	sines[2] = {SIGNAL_MIN, SIGNAL_MAX};
-	sines[4] = {0, SIGNAL_MIN, 0, SIGNAL_MAX};
-	sines[8] = {0, (int8_t)-sin14pi, SIGNAL_MIN, (int8_t)-sin14pi, 0, sin14pi, SIGNAL_MAX, sin14pi};
+	tx_symbols.push_back((int8_t*)malloc(FL2K_BUF_LEN));
+	double c_0 = (2*M_PI * (double)FREQ_BASE) / (double)SAMPLE_RATE;
 
-	tx_buffer = (int8_t*)malloc(FL2K_BUF_LEN);
-	auto sine = sines[SF_RATIO];
+	tx_symbols.push_back((int8_t*)malloc(FL2K_BUF_LEN));
+	double c_1 = (2*M_PI * ((double)FREQ_BASE + 1*FREQ_SHIFT)) / (double)SAMPLE_RATE;
+
+	tx_symbols.push_back((int8_t*)malloc(FL2K_BUF_LEN));
+	double c_2 = (2*M_PI * ((double)FREQ_BASE + 2*FREQ_SHIFT)) / (double)SAMPLE_RATE;
+
+	tx_symbols.push_back((int8_t*)malloc(FL2K_BUF_LEN));
+	double c_3 = (2*M_PI * ((double)FREQ_BASE + 3*FREQ_SHIFT)) / (double)SAMPLE_RATE;
+
 	for(int i = 0; i < FL2K_BUF_LEN; i++) {
-		tx_buffer[i] = sine[i % SF_RATIO];
+		tx_symbols[0][i] = (int8_t)(sin(c_0 * i) * SIGNAL_MAX);
+		tx_symbols[1][i] = (int8_t)(sin(c_1 * i) * SIGNAL_MAX);
+		tx_symbols[2][i] = (int8_t)(sin(c_2 * i) * SIGNAL_MAX);
+		tx_symbols[3][i] = (int8_t)(sin(c_3 * i) * SIGNAL_MAX);
 	}
 }
 
@@ -79,18 +89,9 @@ void attach_sighandlers() {
 	sigaction(SIGPIPE, &sigign, nullptr);
 }
 
-void set_freq_carrier(uint32_t freq) {
-	uint32_t samplerate = freq * SF_RATIO;
-
-	// Set the sample rate
-	int r = fl2k_set_sample_rate(fl2k_dev, samplerate);
-	if (r < 0) {
-		cout << "WARNING: Failed to set sample rate. " << r << endl;
-	}
-
-	/* read back actual frequency */
-	samplerate = fl2k_get_sample_rate(fl2k_dev);
-	cout << "Actual {sample rate,frequency} = {" << samplerate << "," << samplerate/SF_RATIO << "}" << endl;
+void set_freq_to_symbol(int symbol) {
+	tx_buffer = tx_symbols[symbol];
+	cout << symbol << flush;
 }
 
 
@@ -143,9 +144,19 @@ int main(int argc, char **argv) {
 	}
 	else {
 		cout << "Opened device" << endl;
-		int r = fl2k_start_tx(fl2k_dev, fl2k_callback, nullptr, 0);
 
-		/* TODO: run timers here to keep transmitting */
+		int r = fl2k_start_tx(fl2k_dev, fl2k_callback, nullptr, 0);
+		
+		// Set the sample rate
+		r = fl2k_set_sample_rate(fl2k_dev, SAMPLE_RATE);
+		if (r < 0) {
+			cout << "WARNING: Failed to set sample rate. " << r << endl;
+		}
+		
+		for(int s = 0; s < WSPR_MSG_SIZE; s++) {
+			set_freq_to_symbol((int)wspr_msg.symbols[s]);
+			this_thread::sleep_for(std::chrono::milliseconds(SYMBOL_LENGTH_MS));
+		}
 	}
 
 	fl2k_stop_tx(fl2k_dev);
